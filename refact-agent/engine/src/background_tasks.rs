@@ -56,6 +56,6 @@ pub async fn start_background_tasks(gcx: Arc<ARwLock<GlobalContext>>) -> Backgro
             tokio::spawn(crate::files_in_jsonl::reload_if_jsonl_changes_background_task(gcx.clone()))
         ]);
     }
-    bg.extend(crate::autonomy::look_for_a_job_start_tasks(gcx.clone()).await);
+    bg.extend(crate::autonomy2::create_advance_chat_thread(gcx.clone()).await);
     bg
 }

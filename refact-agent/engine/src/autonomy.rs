@@ -248,16 +248,16 @@ async fn do_the_job(
     Ok(serde_json::json!({}))
 }
 
-pub async fn look_for_a_job_start_tasks(
-    gcx: Arc<ARwLock<GlobalContext>>,
-) -> Vec<tokio::task::JoinHandle<()>> {
-    let mut handles = Vec::new();
-    for n in 0..1 {
-        let handle = tokio::spawn(look_for_a_job(
-            gcx.clone(),
-            n,
-        ));
-        handles.push(handle);
-    }
-    handles
-}
+// pub async fn look_for_a_job_start_tasks(
+//     gcx: Arc<ARwLock<GlobalContext>>,
+// ) -> Vec<tokio::task::JoinHandle<()>> {
+//     let mut handles = Vec::new();
+//     for n in 0..1 {
+//         let handle = tokio::spawn(look_for_a_job(
+//             gcx.clone(),
+//             n,
+//         ));
+//         handles.push(handle);
+//     }
+//     handles
+// }
