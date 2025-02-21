@@ -1,3 +1,4 @@
+use std::time::SystemTime;
 use std::sync::Arc;
 use tokio::sync::RwLock as ARwLock;
 use parking_lot::Mutex as ParkMutex;
@@ -12,6 +13,9 @@ use crate::custom_error::ScratchError;
 use crate::global_context::GlobalContext;
 use crate::agent_db::db_structs::{ChoreDB, CThread};
 use crate::agent_db::chore_pubsub_sleeping_procedure;
+
+
+const LOCK_TOO_OLD_SEC: f64 = 600.0;
 
 
 pub fn cthread_get(
@@ -360,4 +364,96 @@ pub fn cthread_subsription_poll(
         *seen_id = id;
     }
     Ok((deleted_cthread_ids, updated_cthread_ids))
+}
+
+#[derive(Deserialize)]
+struct CThreadLockRequest {
+    pub cthread_id: String,
+    pub worker_name: String,
+}
+
+
+// HTTP handler
+pub async fn handle_db_v1_cthread_lock(
+    Extension(gcx): Extension<Arc<ARwLock<GlobalContext>>>,
+    body_bytes: hyper::body::Bytes,
+) -> Result<Response<Body>, ScratchError> {
+    let post: CThreadLockRequest = serde_json::from_slice(&body_bytes).map_err(|e| {
+        ScratchError::new(StatusCode::BAD_REQUEST, format!("JSON problem: {}", e))
+    })?;
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs_f64();
+    let cdb = gcx.read().await.chore_db.clone();
+    let lite_arc = cdb.lock().lite.clone();
+
+    let (cthread_rec, cmessages) = {
+        let mut conn = lite_arc.lock();
+        let tx = conn.transaction().map_err(|e|
+            ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("Transaction error: {}", e))
+        )?;
+
+        let mut cthread_rec = {
+            let mut stmt = tx.prepare("SELECT * FROM cthreads WHERE cthread_id = ?1")
+                .map_err(|e| ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let rows = stmt.query(rusqlite::params![post.cthread_id])
+                .map_err(|e| ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let mut cthreads = crate::agent_db::db_cthread::cthreads_from_rows(rows);
+            cthreads.pop().ok_or_else(||
+                ScratchError::new(StatusCode::NOT_FOUND, format!("No CThread found with id: {}", post.cthread_id))
+            )?
+        };
+
+        let cmessages = {
+            let mut stmt = tx.prepare("SELECT * FROM cmessages WHERE cmessage_belongs_to_cthread_id = ?1 ORDER BY cmessage_num, cmessage_alt")
+                .map_err(|e| ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let rows = stmt.query(rusqlite::params![post.cthread_id])
+                .map_err(|e| ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            crate::agent_db::db_cmessage::cmessages_from_rows(rows)
+        };
+
+        let busy = !cthread_rec.cthread_locked_by.is_empty() &&
+                  cthread_rec.cthread_locked_ts + LOCK_TOO_OLD_SEC > now;
+        if busy {
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"locked_result": "busy"}).to_string()))
+                .unwrap());
+        }
+
+        let last_message_is_user = cmessages.last().map_or(false, |cmsg| {
+            let cmessage: serde_json::Value = serde_json::from_str(&cmsg.cmessage_json).unwrap();
+            cmessage["role"] == "user"
+        });
+
+        if !last_message_is_user || !cthread_rec.cthread_error.is_empty() {
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"locked_result": "nothing_to_do"}).to_string()))
+                .unwrap());
+        }
+
+        cthread_rec.cthread_locked_by = post.worker_name.clone();
+        cthread_rec.cthread_locked_ts = now;
+        crate::agent_db::db_cthread::cthread_set_lowlevel(&tx, &cthread_rec)
+            .map_err(|e| ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        tracing::info!("cthread {} locked by {}", cthread_rec.cthread_id, post.worker_name);
+
+        tx.commit().map_err(|e|
+            ScratchError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("Commit error: {}", e))
+        )?;
+
+        (cthread_rec, cmessages)
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "locked_result": "success",
+            "cthread": cthread_rec,
+            "messages": cmessages
+        }).to_string()))
+        .unwrap())
 }
