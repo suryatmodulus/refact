@@ -6,9 +6,8 @@ description: Supported Models in Refact
 ## Cloud Version of Refact
 
 ### Completion models 
-- Refact/1.6B  
-- starcoder2/3b
-
+-  Qwen2.5-Coder-1.5B
+  
 ### Chat models
 - GPT 3.5
 - GPT 4 (Pro plan)
