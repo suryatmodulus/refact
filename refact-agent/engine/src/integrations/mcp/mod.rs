@@ -1,6 +1,7 @@
 pub mod integr_mcp;
 pub mod tool_mcp;
 pub mod session_mcp;
+pub mod mcp_resources;
 
 pub use integr_mcp::IntegrationMCP;
 
