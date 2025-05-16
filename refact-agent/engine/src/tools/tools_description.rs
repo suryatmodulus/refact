@@ -26,21 +26,6 @@ pub struct MatchConfirmDeny {
     pub rule: String,
 }
 
-#[derive(Clone, Copy, Serialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolGroupCategory {
-    Builtin,
-    Integration,
-    MCP,
-}
-
-pub struct ToolGroup {
-    pub name: String,
-    pub description: String,
-    pub category: ToolGroupCategory,
-    pub tools: Vec<Box<dyn Tool + Send>>,
-}
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolSourceType {
